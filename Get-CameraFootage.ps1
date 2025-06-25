@@ -4,7 +4,10 @@ Param (
 	[string] $Path,
 
     [Parameter(Mandatory=$true)]
-	[string] $FolderID
+	[string] $FolderID,
+
+    [Parameter(Mandatory=$false)]
+    [string] $day = "yesterday"
 )
 
 <#
@@ -27,37 +30,31 @@ Param (
 .EXAMPLE
   .\Send-BoxFiles.ps1 -path E:\BOX -folderId 123456789012
 #>
-Start-Transcript 'E:\APP\transcript.txt'
 
-# Set the Box CLI executable path
-$BoxCLIPath = "C:\Program Files\@boxcli\bin\"
-Set-Location -Path $BoxCLIPath
-
-# Set current boxcli environment
-.\box configure:environments:set-current video-store
-
-if(-not (Get-Module Posh-SYSLOG)) {
-  Import-Module -Name Posh-SYSLOG
+if ($day -eq "yesterday") {
+    $day = (Get-Date).AddDays(-1).ToString("yyyy-MM-dd")
+} else {
+    
+    Write-Host "Using $day"
 }
 
-# Get list of files
-$files = Get-ChildItem -Path $Path\*
+Connect-Vms -Name CH-MSAS -ServerAddress "http://cameras.middletownct.gov"
 
-# Process each file individually
-foreach ($file in $files) {
-    # Upload the file to Box
-    Write-Host "Uploading $file"
+$starttime = "$day 00:00:00"
+$endtime = "$day 23:59:59"
+$camera = Get-VmsCamera | Where-Object -Property Name -Like "*Ballot*"
 
-    try {
-        .\box files:upload $file --parent-id=$FolderID
-        Send-SyslogMessage -Server syslog.middletownct.gov -Severity Informational -Facility kern -ApplicationName Send-BoxFiles -Message "File Upload Success: $file"
-        Remove-Item -Path $file
-    } catch {
-        Send-SyslogMessage -Server syslog.middletownct.gov -Severity Informational -Facility kern -ApplicationName Send-BoxFiles -Message "File Upload Error: $file"
-    }
-}
+Write-Verbose "Start Time: $starttime"
+Write-Verbose "End Time: $endtime"
+Write-Verbose "Camera Id: ${camera.id}"
 
-Stop-Transcript
+Start-Export -CameraIds $camera.id -Format MKV -StartTime $starttime -EndTime $endtime -Path E:\BOX\MILESTONE -Name "TEMP"
+
+Set-Location -Path "E:\Program Files\mkvtoolnix"
+.\mkvmerge.exe --split 1G --output E:\BOX\MILESTONE\$day.mkv E:\BOX\MILESTONE\TEMP.mkv 
+Remove-Item -Path "E:\BOX\MILESTONE\TEMP.mkv"
+
+&  E:\APP\MILESTONE\Send-BoxFiles.ps1 -Path $Path -folderId $FolderID
 
 # SIG # Begin signature block
 # MIIboQYJKoZIhvcNAQcCoIIbkjCCG44CAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
